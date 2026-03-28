@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python env.py)",
+      "Bash(python3 env.py)",
+      "Bash(cmd.exe /c \"python --version\")",
+      "Bash(cmd.exe /c \"py --version\")",
+      "Read(//c/Program Files/WindowsApps/PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0//**)",
+      "Read(//c/Users/manum/AppData/Local/Programs/**)",
+      "Bash(ls /c/Python*)",
+      "Read(//c/Users/manum/**)",
+      "Bash(\"/c/Users/manum/anaconda3/python.exe\" \"c:\\\\Users\\\\manum\\\\Desktop\\\\IA Projects\\\\SupplyChain-Swarm-Sim\\\\env.py\")",
+      "Bash(python -c \":*)",
+      "Bash(python3 planner_action.py)",
+      "Bash(python disruptor_action.py)",
+      "Bash(\"/c/Users/manum/anaconda3/python.exe\" \"c:\\\\Users\\\\manum\\\\Desktop\\\\IA Projects\\\\SupplyChain-Swarm-Sim\\\\migrate_log.py\")",
+      "Bash(python:*)",
+      "Bash(\"/c/Users/manum/anaconda3/python.exe\" -c \":*)",
+      "Bash(\"/c/Users/manum/anaconda3/python.exe\" env.py)",
+      "Bash(timeout 22 \"/c/Users/manum/anaconda3/python.exe\" tick_loop.py)",
+      "Bash(timeout 32 \"/c/Users/manum/anaconda3/python.exe\" tick_loop.py)",
+      "Bash(timeout 37 \"/c/Users/manum/anaconda3/python.exe\" tick_loop.py)",
+      "Bash(timeout 55 \"/c/Users/manum/anaconda3/python.exe\" -X utf8 tick_loop.py)",
+      "Bash(\"/c/Users/manum/anaconda3/python.exe\" -X utf8 -c \":*)",
+      "Bash(timeout 62 \"/c/Users/manum/anaconda3/python.exe\" -X utf8 tick_loop.py)",
+      "Bash(timeout 67 \"/c/Users/manum/anaconda3/python.exe\" -X utf8 tick_loop.py)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" -c \"import anthropic; print\\(anthropic.__version__\\)\")",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" -m pip install anthropic)",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" env.py)",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" -c \"import os; print\\(''ANTHROPIC_API_KEY set:'', bool\\(os.environ.get\\(''ANTHROPIC_API_KEY''\\)\\)\\)\")",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" -c \":*)",
+      "Bash(\"C:/Users/manum/anaconda3/python.exe\" -X utf8 forecast_action.py 1)",
+      "Bash(ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\" \"C:/Users/manum/anaconda3/python.exe\" -X utf8 forecast_action.py 1)",
+      "Bash(grep -E \"\\\\.py$|\\\\.db$|\\\\.md$|\\\\.env\")",
+      "Read(//c/Users/manum/Desktop/IA Projects/SupplyChain-Swarm-Sim/**)"
+    ]
+  }
+}
