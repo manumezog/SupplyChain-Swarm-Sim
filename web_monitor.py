@@ -15,6 +15,7 @@ import sys
 import sqlite3
 import time
 import threading
+import subprocess
 from flask import Flask, send_from_directory
 from flask_socketio import SocketIO, emit
 
@@ -22,9 +23,20 @@ from flask_socketio import SocketIO, emit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from token_utils import get_db_conn, DB_PATH
 
-WEB_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-PORT      = 5050
+WEB_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PAUSE_FILE  = os.path.join(PROJECT_DIR, ".tick_pause")
+PORT        = 5050
 POLL_INTERVAL = 2
+
+# Tick control state
+_tick_mode = 'auto'          # 'auto' | 'manual'
+_manual_tick_event = threading.Event()
+_tick_running = threading.Lock()
+
+# Clean up any leftover pause file on startup
+if os.path.exists(PAUSE_FILE):
+    os.remove(PAUSE_FILE)
 
 
 # ── Flask Setup ───────────────────────────────────────────────
@@ -89,13 +101,15 @@ def build_state(tick=None):
     # ── Inventory ─────────────────────────────────────────────
     if is_live:
         inventory = db_query(
-            "SELECT id, type, capacity, safety_stock, inventory, labor_capacity_base "
+            "SELECT id, type, capacity, safety_stock, inventory, labor_capacity_base, "
+            "hourly_labor_cost, units_per_hour "
             "FROM nodes ORDER BY id"
         )
     else:
         # Historical: use snapshot data for inventory, current schema for structure
         inventory = db_query(
             "SELECT n.id, n.type, n.capacity, n.safety_stock, n.labor_capacity_base, "
+            "n.hourly_labor_cost, n.units_per_hour, "
             "COALESCE(s.inventory, n.inventory) as inventory "
             "FROM nodes n LEFT JOIN snapshots s ON s.node_id = n.id AND s.tick = ? "
             "ORDER BY n.id",
@@ -187,10 +201,59 @@ def build_state(tick=None):
     else:
         latest_fin = {"tick": tick, "total_labor_cost": 0, "total_transport_cost": 0, "total_units_shipped": 0, "cost_per_unit_shipped": 0}
 
+    # ── Forecast accuracy history (WAPE per tick, IB vs FC) ──
+    node_types = {n['id']: n['type'] for n in inventory}
+    raw_forecast = db_query(
+        "SELECT f.forecast_for_tick as tick, f.node_id, f.forecast_demand, f.actual_demand "
+        "FROM forecast f WHERE f.actual_demand IS NOT NULL AND f.forecast_for_tick <= ? "
+        "ORDER BY f.forecast_for_tick, f.node_id",
+        (tick,)
+    )
+    # Group by tick, compute WAPE separately for IB and FC nodes
+    from collections import defaultdict
+    tick_groups = defaultdict(lambda: {'ib': [], 'fc': []})
+    for r in raw_forecast:
+        ntype = node_types.get(r['node_id'], '')
+        key = 'ib' if ntype == 'IBCenter' else 'fc'
+        tick_groups[r['tick']][key].append((r['forecast_demand'], r['actual_demand']))
+
+    def wape(pairs):
+        num = sum(abs(f - a) for f, a in pairs if a is not None)
+        den = sum(abs(a) for _, a in pairs if a is not None)
+        return round(num / den, 4) if den > 0 else None
+
+    forecast_accuracy_history = [
+        {
+            'tick': t,
+            'wape_ib': wape(groups['ib']) if groups['ib'] else None,
+            'wape_fc': wape(groups['fc']) if groups['fc'] else None,
+        }
+        for t, groups in sorted(tick_groups.items())
+    ]
+
+    # ── Transport plan for current tick (capacity per lane) ──
+    transport_plan = db_query(
+        "SELECT lane_id, planned_capacity FROM transport_plan WHERE tick_for = ?",
+        (tick,)
+    )
+    lane_capacity = {r['lane_id']: r['planned_capacity'] for r in transport_plan}
+
+    # ── Demand history (last 3 ticks per FC for backlog-days) ─
+    demand_history_raw = db_query(
+        "SELECT node_id, tick, orders FROM demand WHERE tick > ? AND tick <= ? ORDER BY node_id, tick",
+        (max(0, tick - 3), tick)
+    )
+    demand_avg = {}
+    dh_grouped = defaultdict(list)
+    for r in demand_history_raw:
+        dh_grouped[r['node_id']].append(r['orders'])
+    for nid, vals in dh_grouped.items():
+        demand_avg[nid] = sum(vals) / len(vals) if vals else 0
+
     # ── Agent log (with reasoning) ────────────────────────────
     log = db_query(
         "SELECT tick, agent_name, action_taken, reasoning FROM log "
-        "WHERE tick <= ? ORDER BY id DESC LIMIT 15",
+        "WHERE tick <= ? ORDER BY id DESC",
         (tick,)
     )
 
@@ -209,8 +272,11 @@ def build_state(tick=None):
         'demand':      demand,
         'tokens':      tokens,
         'log':         log,
-        'financials':  latest_fin,
+        'financials':         latest_fin,
         'financials_history': financials_history,
+        'lane_capacity':             lane_capacity,
+        'demand_avg':               demand_avg,
+        'forecast_accuracy_history': forecast_accuracy_history,
     }
 
 
@@ -303,6 +369,53 @@ def handle_remove_disruption(data):
         print(f"[Error] Failed to remove disruption: {e}")
 
 
+@socketio.on('set_tick_mode')
+def handle_set_tick_mode(data):
+    global _tick_mode
+    mode = data.get('mode', 'auto')
+    if mode in ('auto', 'manual'):
+        _tick_mode = mode
+        if mode == 'manual':
+            open(PAUSE_FILE, 'w').close()   # signal tick_loop.py to pause
+        elif os.path.exists(PAUSE_FILE):
+            os.remove(PAUSE_FILE)           # resume tick_loop.py
+        emit('tick_mode_ack', {'mode': _tick_mode}, broadcast=True)
+        print(f"[Dashboard] Tick mode set to: {_tick_mode}")
+
+
+@socketio.on('trigger_tick')
+def handle_trigger_tick():
+    """Client requests one manual tick execution."""
+    if _tick_mode != 'manual':
+        emit('tick_trigger_ack', {'status': 'error', 'msg': 'Not in manual mode'})
+        return
+    if not _tick_running.acquire(blocking=False):
+        emit('tick_trigger_ack', {'status': 'busy', 'msg': 'Tick already running'})
+        return
+    try:
+        emit('tick_trigger_ack', {'status': 'running'}, broadcast=True)
+        # Run one tick synchronously (no-llm for speed; honours env NO_LLM setting)
+        no_llm = os.environ.get('NO_LLM', '0') == '1'
+        cmd = [sys.executable, os.path.join(PROJECT_DIR, 'tick_loop.py'), '--ticks', '1']
+        if no_llm:
+            cmd.append('--no-llm')
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=PROJECT_DIR)
+        if result.returncode == 0:
+            state = build_state()
+            socketio.emit('state_update', state)
+            emit('tick_trigger_ack', {'status': 'done', 'tick': state['tick']}, broadcast=True)
+        else:
+            err = (result.stderr or result.stdout or 'unknown error')[:200]
+            emit('tick_trigger_ack', {'status': 'error', 'msg': err}, broadcast=True)
+            print(f"[Dashboard] Manual tick error: {err}")
+    except subprocess.TimeoutExpired:
+        emit('tick_trigger_ack', {'status': 'error', 'msg': 'Tick timed out (>60s)'}, broadcast=True)
+    except Exception as e:
+        emit('tick_trigger_ack', {'status': 'error', 'msg': str(e)}, broadcast=True)
+    finally:
+        _tick_running.release()
+
+
 @socketio.on('set_demand_modifier')
 def handle_set_demand_modifier(data):
     """Manual trigger to spike/drop demand for an FC."""
@@ -344,10 +457,13 @@ def poll_and_push():
     while True:
         try:
             state = build_state()
-            socketio.emit('state_update', state)
+            # Always push on tick change; in manual mode skip auto-advance
             if state['tick'] != _last_tick:
                 _last_tick = state['tick']
                 print(f"[Dashboard] Pushed tick {state['tick']}")
+                socketio.emit('state_update', state)
+            elif _tick_mode == 'auto':
+                socketio.emit('state_update', state)
         except Exception as e:
             print(f"[Dashboard] Poll error: {e}")
         time.sleep(POLL_INTERVAL)

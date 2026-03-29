@@ -33,9 +33,10 @@ from env import (
     DISRUPTION_PROBABILITY, MAX_ACTIVE_DISRUPTIONS,
 )
 
-DB_PATH  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_state.db")
-INTERVAL = 2  # seconds between ticks
-FLEX_PCT = 0.15
+DB_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_state.db")
+PAUSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tick_pause")
+INTERVAL   = 2  # seconds between ticks
+FLEX_PCT   = 0.15
 
 # Disruption scenario tables (inlined to avoid import side-effects)
 LANE_SCENARIOS = [
@@ -117,6 +118,20 @@ def agent_forecast(cur, tick):
             "VALUES (?,?,?,?,NULL,NULL,?)",
             (tick, forecast_for, node_id, float(fval), "exp_smooth_seasonal"))
         parts.append(f"FC{node_id}:{fval}")
+
+    # IB outbound forecasts: expected dispatch = weighted sum of downstream FC forecasts
+    for ib_id in IB_IDS:
+        fc_weights = IB_FC_WEIGHTS.get(ib_id, {})
+        ib_fcast = max(1, round(sum(
+            forecasts.get(fc_id, max(1, round(BASE_DEMAND.get(fc_id, 70) * seasonal))) * w
+            for fc_id, w in fc_weights.items()
+        )))
+        cur.execute(
+            "INSERT OR IGNORE INTO forecast "
+            "(tick_created, forecast_for_tick, node_id, forecast_demand, actual_demand, mae, method) "
+            "VALUES (?,?,?,?,NULL,NULL,?)",
+            (tick, forecast_for, ib_id, float(ib_fcast), "ib_outbound_forecast"))
+        parts.append(f"IB{ib_id}:{ib_fcast}")
 
     action = f"Forecast for tick {forecast_for}: {' | '.join(parts)} [exp_smooth_seasonal]"
     cur.execute("INSERT INTO log (tick, agent_name, action_taken, reasoning) VALUES (?,?,?,?)",
@@ -654,6 +669,23 @@ def run_tick(tick, tick_seed, use_llm=True):
         agent_demand(cur, tick)
         agent_supply(cur, tick)
         agent_planner(cur, tick)
+
+        # Update IB actual outbound in forecast table (sum of transport qty dispatched this tick)
+        ib_ids_sql = ",".join(str(i) for i in IB_IDS)
+        cur.execute(f"""
+            UPDATE forecast
+            SET actual_demand = COALESCE((
+                    SELECT SUM(t.qty) FROM transport t
+                    JOIN lanes l ON l.id = t.lane_id
+                    WHERE t.tick = forecast.forecast_for_tick AND l.origin = forecast.node_id
+                ), 0),
+                mae = ABS(forecast_demand - COALESCE((
+                    SELECT SUM(t.qty) FROM transport t
+                    JOIN lanes l ON l.id = t.lane_id
+                    WHERE t.tick = forecast.forecast_for_tick AND l.origin = forecast.node_id
+                ), 0))
+            WHERE forecast_for_tick = ? AND node_id IN ({ib_ids_sql}) AND actual_demand IS NULL
+        """, (tick,))
         conn.commit()  # Commit execution phase
 
         # Snapshot + financials
@@ -701,6 +733,10 @@ if __name__ == "__main__":
     tick_count = 0
     try:
         while True:
+            # Pause when .tick_pause file exists (manual mode set via dashboard)
+            if args.ticks == 0:
+                while os.path.exists(PAUSE_FILE):
+                    time.sleep(0.5)
             tick = get_next_tick()
             tick_seed = (args.seed + tick) if args.seed is not None else None
             print_separator(tick)

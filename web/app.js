@@ -7,6 +7,7 @@
 let socket = null;
 let costChart = null;
 let financialChart = null;
+let forecastChart = null;
 let prevState = null;
 let replayMode = false;      // true = scrubbing historical ticks
 let replayPlaying = false;   // true = auto-advancing replay
@@ -23,23 +24,34 @@ const AGENT_COLORS = {
 };
 
 const TOPO = {
-  width: 520, height: 320,
+  width: 620, height: 430,
   nodes: {
-    1: { x: 120, y: 100, label: 'IB1', type: 'ib' },
-    2: { x: 120, y: 220, label: 'IB2', type: 'ib' },
-    3: { x: 380, y:  60, label: 'FC3', type: 'fc' },
-    4: { x: 380, y: 160, label: 'FC4', type: 'fc' },
-    5: { x: 380, y: 260, label: 'FC5', type: 'fc' },
+    1: { x: 105, y:  85, label: 'IB1', type: 'ib' },
+    2: { x: 105, y: 215, label: 'IB2', type: 'ib' },
+    6: { x: 105, y: 345, label: 'IB3', type: 'ib' },
+    3: { x: 470, y:  45, label: 'FC3', type: 'fc' },
+    4: { x: 470, y: 115, label: 'FC4', type: 'fc' },
+    5: { x: 470, y: 185, label: 'FC5', type: 'fc' },
+    7: { x: 470, y: 255, label: 'FC7', type: 'fc' },
+    8: { x: 470, y: 325, label: 'FC8', type: 'fc' },
+    9: { x: 470, y: 395, label: 'FC9', type: 'fc' },
   },
   suppliers: [
-    { x: 120, y: 30,  label: 'Supplier → IB1', node: 1 },
-    { x: 120, y: 310, label: 'Supplier → IB2', node: 2 },
+    { x: 25, y:  85, label: 'Supplier → IB1', node: 1 },
+    { x: 25, y: 215, label: 'Supplier → IB2', node: 2 },
+    { x: 25, y: 345, label: 'Supplier → IB3', node: 6 },
   ],
   lanes: {
-    1: { from: 1, to: 3 },
-    2: { from: 1, to: 4 },
-    3: { from: 2, to: 4 },
-    4: { from: 2, to: 5 },
+     1: { from: 1, to: 3 },
+     2: { from: 1, to: 4 },
+     3: { from: 2, to: 4 },
+     4: { from: 2, to: 5 },
+     5: { from: 1, to: 7 },
+     6: { from: 2, to: 8 },
+     7: { from: 6, to: 7 },
+     8: { from: 6, to: 8 },
+     9: { from: 6, to: 9 },
+    10: { from: 2, to: 9 },
   }
 };
 
@@ -215,6 +227,8 @@ function updateDashboard(state) {
   updateDisruptions(state);
   updateTokens(state);
   updateFinancials(state);
+  updateForecastAccuracy(state);
+  updateNetworkHealth(state);
   updateLog(state);
 }
 
@@ -245,110 +259,164 @@ function updateTopology(state) {
   });
   const laneInfo = {};
   (state.lanes || []).forEach(l => { laneInfo[l.id] = l; });
+  const demandMap = {};
+  (state.demand || []).forEach(r => { demandMap[r.node_id] = r; });
+  const laneCapMap = state.lane_capacity || {};
+  const demandAvg  = state.demand_avg   || {};
 
-  let html = `
-    <defs>
-      <filter id="glow-healthy" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="6" result="blur" />
-        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-      </filter>
-      <filter id="glow-warn" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="6" result="blur" />
-        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-      </filter>
-      <filter id="glow-crit" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="8" result="blur" />
-        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-      </filter>
-      
-      <linearGradient id="grad-ib" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#448aff" stop-opacity="0.25"/>
-        <stop offset="100%" stop-color="#2962ff" stop-opacity="0.05"/>
-      </linearGradient>
-      
-      <linearGradient id="grad-fc" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#1de9b6" stop-opacity="0.25"/>
-        <stop offset="100%" stop-color="#00bfa5" stop-opacity="0.05"/>
-      </linearGradient>
-    </defs>
-  `;
+  let html = `<defs>
+    <filter id="glow-healthy" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="glow-warn" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="glow-crit" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <linearGradient id="grad-ib" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#448aff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#2962ff" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="grad-fc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1de9b6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#00bfa5" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>`;
 
+  // Supplier arrows (minimal, left edge only)
   TOPO.suppliers.forEach(s => {
     const node = TOPO.nodes[s.node];
-    html += `<line x1="${s.x}" y1="${s.y + 10}" x2="${node.x}" y2="${node.y - 30}"
-                   stroke="rgba(99,115,175,0.4)" stroke-width="2" stroke-dasharray="3 4"/>`;
-    html += `<text x="${s.x}" y="${s.y}" class="topo-supplier-label" fill="#8892a6">${s.label}</text>`;
+    html += `<line x1="${s.x + 8}" y1="${s.y}" x2="${node.x - 22}" y2="${node.y}"
+                   stroke="rgba(99,115,175,0.3)" stroke-width="1.5" stroke-dasharray="3 5"/>
+             <text x="${s.x}" y="${s.y - 5}" class="topo-supplier-label" fill="#3d4666">▶ Supplier</text>`;
   });
 
+  // Lanes — label placed at 20% along path (near origin), preventing mid-canvas stacking
   Object.entries(TOPO.lanes).forEach(([laneId, lane]) => {
     const from = TOPO.nodes[lane.from];
     const to   = TOPO.nodes[lane.to];
-    const sev  = laneDisruptions[parseInt(laneId)] || 0;
+    if (!from || !to) return;
+    const sev = laneDisruptions[parseInt(laneId)] || 0;
     const isDisrupted = sev > 0;
     const info = laneInfo[parseInt(laneId)];
     const tc   = info ? info.transport_cost : '?';
-    const mx = (from.x + to.x) / 2;
-    const my = (from.y + to.y) / 2;
-    const cx = mx - 20;
 
-    // Base background path
-    html += `<path d="M${from.x + 28},${from.y} Q${cx},${my} ${to.x - 28},${to.y}"
-                   fill="none" stroke="var(--border)" stroke-width="6" stroke-linecap="round"/>`;
+    // Straight path (nodes are already well separated horizontally)
+    const x1 = from.x + 22, y1 = from.y;
+    const x2 = to.x - 22,   y2 = to.y;
+    // Slight curve via midpoint offset
+    const cmx = (x1 + x2) / 2;
+    const cmy = (y1 + y2) / 2 - 10;
+    const pathD = `M${x1},${y1} Q${cmx},${cmy} ${x2},${y2}`;
 
-    // Flow line path
-    const laneClass = isDisrupted ? 'disrupted' : 'healthy';
-    const strokeColor = isDisrupted ? 'var(--red)' : 'var(--blue)';
-    html += `<path d="M${from.x + 28},${from.y} Q${cx},${my} ${to.x - 28},${to.y}"
-                   class="topo-lane ${laneClass}" id="lane-path-${laneId}"
-                   fill="none" stroke="${strokeColor}" stroke-linecap="round"/>`;
+    const strokeColor = isDisrupted ? 'var(--red)' : 'rgba(68,138,255,0.55)';
+    html += `<path d="${pathD}" fill="none" stroke="${isDisrupted ? 'rgba(255,82,82,0.2)' : 'rgba(99,115,175,0.08)'}" stroke-width="5" stroke-linecap="round"/>`;
+    html += `<path d="${pathD}" class="topo-lane ${isDisrupted ? 'disrupted' : 'healthy'}" id="lane-path-${laneId}"
+                   fill="none" stroke="${strokeColor}" stroke-width="1.5" stroke-linecap="round"/>`;
 
-    const lx = mx - 10;
-    const ly = my + (from.y < to.y ? -8 : 8);
-    const sevLabel = sev > 0 ? ` ⚠${Math.round(sev * 100)}%` : '';
-    
-    // Lane badge background
-    html += `<rect x="${lx - 25}" y="${ly - 10}" width="50" height="14" rx="4" fill="var(--bg-base)" stroke="var(--border)" stroke-width="1"/>`;
-    
-    html += `<text x="${lx}" y="${ly}" class="topo-lane-label">TC:${tc}${sevLabel}</text>`;
+    // Label at t=0.18 (close to origin IB, so lanes from same IB stack near it)
+    const t = 0.18;
+    const lx = (1-t)*(1-t)*x1 + 2*(1-t)*t*cmx + t*t*x2;
+    const ly = (1-t)*(1-t)*y1 + 2*(1-t)*t*cmy + t*t*y2;
+    const sevTag = sev > 0 ? ` ⚠${Math.round(sev*100)}%` : '';
+    html += `<rect x="${lx - 26}" y="${ly - 8}" width="52" height="11" rx="3"
+                   fill="rgba(11,14,23,0.88)" stroke="rgba(99,115,175,0.18)" stroke-width="1"/>
+             <text x="${lx}" y="${ly}" class="topo-lane-label">L${laneId} ${tc}${sevTag}</text>`;
 
     if (!isDisrupted) {
-      html += `<circle r="4" fill="var(--cyan)" filter="url(#glow-healthy)">
-                 <animateMotion dur="${2.5 + (parseInt(laneId) * 0.5)}s" repeatCount="indefinite">
+      html += `<circle r="3" fill="var(--cyan)">
+                 <animateMotion dur="${2.8 + parseInt(laneId) * 0.35}s" repeatCount="indefinite">
                    <mpath href="#lane-path-${laneId}"/>
                  </animateMotion>
                </circle>`;
     }
   });
 
+  // Nodes
+  const R = 20; // node radius
   Object.entries(TOPO.nodes).forEach(([nodeId, pos]) => {
-    const n = nodeMap[parseInt(nodeId)];
+    const n     = nodeMap[parseInt(nodeId)];
+    const isIB  = pos.type === 'ib';
+
     let fill, stroke, filter;
-    
-    const isIB = pos.type === 'ib';
-    const baseGradient = isIB ? 'url(#grad-ib)' : 'url(#grad-fc)';
-    
     if (!n || n.inventory <= 0) {
       fill = 'rgba(255,82,82,0.2)'; stroke = 'var(--red)'; filter = 'url(#glow-crit)';
     } else if (n.inventory < n.safety_stock) {
-      fill = 'rgba(255,171,64,0.15)'; stroke = 'var(--yellow)'; filter = 'url(#glow-warn)';
+      fill = 'rgba(255,171,64,0.12)'; stroke = 'var(--yellow)'; filter = 'url(#glow-warn)';
     } else {
-      fill = baseGradient; 
-      stroke = isIB ? 'var(--blue)' : 'var(--green)'; 
+      fill = isIB ? 'url(#grad-ib)' : 'url(#grad-fc)';
+      stroke = isIB ? 'var(--blue)' : 'var(--green)';
       filter = 'url(#glow-healthy)';
     }
 
-    // Outer glow ring
-    html += `<circle cx="${pos.x}" cy="${pos.y}" r="32" fill="none" stroke="${stroke}" stroke-width="1" opacity="0.3" filter="${filter}">
-      <animate attributeName="r" values="32;36;32" dur="3s" repeatCount="indefinite" />
-      <animate attributeName="opacity" values="0.3;0.1;0.3" dur="3s" repeatCount="indefinite" />
+    // Subtle pulse ring
+    html += `<circle cx="${pos.x}" cy="${pos.y}" r="${R + 7}" fill="none" stroke="${stroke}"
+                     stroke-width="1" opacity="0.18" filter="${filter}">
+      <animate attributeName="r"       values="${R+7};${R+11};${R+7}" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.18;0.05;0.18"        dur="3s" repeatCount="indefinite"/>
     </circle>`;
 
-    // Main node circle
-    html += `<g class="topo-node">
-      <circle cx="${pos.x}" cy="${pos.y}" r="28" fill="${fill}" stroke="${stroke}" stroke-width="2.5" filter="${filter}"/>
-      <text x="${pos.x}" y="${pos.y - 4}" class="topo-node-label">${pos.label}</text>
-      <text x="${pos.x}" y="${pos.y + 12}" class="topo-node-inv">${n ? n.inventory : '?'}/${n ? n.capacity : '?'}</text>
-    </g>`;
+    // Node circle + label
+    html += `<circle cx="${pos.x}" cy="${pos.y}" r="${R}" fill="${fill}" stroke="${stroke}" stroke-width="2" filter="${filter}"/>`;
+    html += `<text x="${pos.x}" y="${pos.y + 4}" class="topo-node-label">${pos.label}</text>`;
+
+    if (isIB && n) {
+      // IB: just show inventory % below label
+      const invPct = Math.round((n.inventory / n.capacity) * 100);
+      const iColor = n.inventory <= 0 ? 'var(--red)' : n.inventory < n.safety_stock ? 'var(--yellow)' : 'rgba(99,115,175,0.7)';
+      html += `<text x="${pos.x}" y="${pos.y + 14}" class="topo-node-inv" fill="${iColor}">${invPct}%</text>`;
+    }
+
+    if (!isIB && n) {
+      const dem = demandMap[parseInt(nodeId)];
+
+      // ── Inventory % of max capacity ─────────────────────────
+      const invPct   = Math.round((n.inventory / n.capacity) * 100);
+      const invColor = n.inventory <= 0 ? 'var(--red)' : n.inventory < n.safety_stock ? 'var(--yellow)' : 'var(--green)';
+
+      // ── Labor staffing % of max labor capacity ──────────────
+      const laborPct   = dem ? Math.round((dem.labor_capacity / n.labor_capacity_base) * 100) : null;
+      const laborColor = laborPct == null ? '#5c6380'
+        : laborPct < 75  ? 'var(--red)'
+        : laborPct < 95  ? 'var(--yellow)'
+        : 'var(--green)';
+
+      // ── Backlog days (backlog ÷ avg actual demand last 3t) ──
+      let blDays = '0d', blColor = 'var(--text-dim)';
+      if (dem && dem.backlog > 0) {
+        const avgD = demandAvg[parseInt(nodeId)] || dem.orders || 1;
+        const d = avgD > 0 ? (dem.backlog / avgD).toFixed(1) : '—';
+        blDays  = `${d}d`;
+        blColor = parseFloat(d) >= 2 ? 'var(--red)' : 'var(--yellow)';
+      }
+
+      // ── Variable cost per unit shipped (labor cost/unit) ───
+      let vcpu = '—', vcColor = 'var(--text-dim)';
+      if (dem && dem.shipped > 0 && n.units_per_hour > 0) {
+        const laborCost = (dem.labor_capacity / n.units_per_hour) * n.hourly_labor_cost;
+        vcpu    = `€${(laborCost / dem.shipped).toFixed(2)}`;
+        vcColor = 'var(--purple)';
+      }
+
+      // ── Side panel (right of node) ─────────────────────────
+      const PW = 82, PH = 58, PX = pos.x + R + 5, PY = pos.y - PH / 2;
+      html += `<rect x="${PX}" y="${PY}" width="${PW}" height="${PH}" rx="4"
+                     fill="rgba(11,14,23,0.82)" stroke="rgba(99,115,175,0.15)" stroke-width="1"/>`;
+
+      // Row helper: key left, value right
+      const row = (label, val, color, rowY) =>
+        `<text x="${PX + 5}"        y="${rowY}" class="topo-panel-key">${label}</text>
+         <text x="${PX + PW - 4}"   y="${rowY}" class="topo-panel-val" fill="${color}" text-anchor="end">${val}</text>`;
+
+      html += row('INV',  `${invPct}%`,    invColor,   PY + 13);
+      html += row('LAB',  laborPct != null ? `${laborPct}%` : '—', laborColor, PY + 26);
+      html += row('BLG',  blDays,           blColor,    PY + 39);
+      html += row('€/U',  vcpu,             vcColor,    PY + 52);
+    }
   });
 
   svg.innerHTML = html;
@@ -465,12 +533,13 @@ function updateDemand(state) {
     const laborPct = r.labor_capacity_base > 0 ? r.labor_capacity / r.labor_capacity_base : 1;
     const laborClass = laborPct < 0.5 ? 'val-red' : laborPct < 0.85 ? 'val-yellow' : 'val-white';
 
+    const laborPctVal = (laborPct * 100).toFixed(0);
     html += `<tr>
       <td>FC${r.node_id}</td>
       <td class="val-white">${r.orders}</td>
       <td class="${fcstClass}">${fcstVal}</td>
       <td class="${maeClass}">${maeVal}</td>
-      <td class="${laborClass}">${r.labor_capacity}/${r.labor_capacity_base}</td>
+      <td class="${laborClass}">${laborPctVal}% <span class="val-dim">(${r.labor_capacity}/${r.labor_capacity_base})</span></td>
       <td class="val-cyan">${r.shipped}</td>
       <td class="${blClass}">${r.backlog}</td>
     </tr>`;
@@ -675,25 +744,273 @@ function updateFinancialChart(history) {
           }
         },
         scales: {
-          x: { display: false },
+          x: {
+            display: true,
+            title: {
+              display: true,
+              text: 'Simulation Tick',
+              color: '#5c6380',
+              font: { family: 'JetBrains Mono', size: 9 }
+            },
+            ticks: { color: '#5c6380', font: { family: 'JetBrains Mono', size: 9 } },
+            grid: { color: 'rgba(255,255,255,0.06)' }
+          },
           y: {
             display: true,
             position: 'left',
-            grid: { color: 'rgba(99,115,175,0.08)' },
-            ticks: { color: '#5c6380', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '€' + v }
+            title: {
+              display: true,
+              text: 'Total Cost (€)',
+              color: '#ffab40',
+              font: { family: 'JetBrains Mono', size: 9 }
+            },
+            grid: { color: 'rgba(255,255,255,0.06)' },
+            ticks: { color: '#8892a6', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '€' + v }
           },
           y1: {
             display: true,
             position: 'right',
+            title: {
+              display: true,
+              text: 'Cost / Unit (€)',
+              color: '#b388ff',
+              font: { family: 'JetBrains Mono', size: 9 }
+            },
             grid: { drawOnChartArea: false },
-            ticks: { color: '#5c6380', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '€' + v }
+            ticks: { color: '#8892a6', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '€' + v }
           }
         },
         animation: { duration: 300 }
-      }
+      },
+      plugins: [{
+        id: 'customBackground',
+        beforeDraw(chart) {
+          const ctx = chart.canvas.getContext('2d');
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.fillStyle = 'rgba(17,24,39,0.92)';
+          ctx.fillRect(0, 0, chart.width, chart.height);
+          ctx.restore();
+        }
+      }]
     });
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Forecast Accuracy (WAPE over time)
+// ═══════════════════════════════════════════════════════════════
+
+function updateForecastAccuracy(state) {
+  const canvas = document.getElementById('forecast-chart');
+  if (!canvas) return;
+
+  const history = state.forecast_accuracy_history || [];
+  if (history.length === 0) return;
+
+  const labels   = history.map(h => h.tick);
+  const wapeIB   = history.map(h => h.wape_ib   != null ? +(h.wape_ib   * 100).toFixed(1) : null);
+  const wapeFC   = history.map(h => h.wape_fc   != null ? +(h.wape_fc   * 100).toFixed(1) : null);
+
+  if (forecastChart) {
+    forecastChart.data.labels = labels;
+    forecastChart.data.datasets[0].data = wapeIB;
+    forecastChart.data.datasets[1].data = wapeFC;
+    forecastChart.update('none');
+    return;
+  }
+
+  const commonTickStyle = { color: '#8892a6', font: { family: 'JetBrains Mono', size: 9 } };
+
+  forecastChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'IB WAPE (%)',
+          data: wapeIB,
+          borderColor: '#448aff',
+          backgroundColor: 'rgba(68,138,255,0.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 2,
+          borderWidth: 2,
+          spanGaps: true,
+        },
+        {
+          label: 'FC WAPE (%)',
+          data: wapeFC,
+          borderColor: '#1de9b6',
+          backgroundColor: 'rgba(29,233,182,0.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 2,
+          borderWidth: 2,
+          spanGaps: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { color: '#8892a6', font: { family: 'JetBrains Mono', size: 10 }, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1)}%` }
+        }
+      },
+      scales: {
+        x: {
+          display: true,
+          title: { display: true, text: 'Simulation Tick', color: '#5c6380', font: { family: 'JetBrains Mono', size: 9 } },
+          ticks: commonTickStyle,
+          grid: { color: 'rgba(255,255,255,0.06)' }
+        },
+        y: {
+          display: true,
+          title: { display: true, text: 'WAPE (%)', color: '#5c6380', font: { family: 'JetBrains Mono', size: 9 } },
+          ticks: { ...commonTickStyle, callback: v => v + '%' },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          min: 0,
+        }
+      },
+      animation: { duration: 300 }
+    },
+    plugins: [{
+      id: 'customBackground',
+      beforeDraw(chart) {
+        const ctx = chart.canvas.getContext('2d');
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-over';
+        ctx.fillStyle = 'rgba(17,24,39,0.92)';
+        ctx.fillRect(0, 0, chart.width, chart.height);
+        ctx.restore();
+      }
+    }]
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// Network Health Narrative (Planner Assessment)
+// ═══════════════════════════════════════════════════════════════
+
+function updateNetworkHealth(state) {
+  const statusBar  = document.getElementById('health-status-bar');
+  const invEl      = document.getElementById('health-inventory');
+  const disEl      = document.getElementById('health-disruptions');
+  const riskEl     = document.getElementById('health-risks');
+  const tickBadge  = document.getElementById('health-tick-badge');
+  if (!statusBar) return;
+
+  if (tickBadge) tickBadge.textContent = `Tick ${state.tick}`;
+
+  const nodes       = state.inventory || [];
+  const disruptions = state.disruptions || [];
+  const demand      = state.demand || [];
+  const finHistory  = state.financials_history || [];
+
+  // ── Inventory analysis ──────────────────────────────────────
+  const fcs         = nodes.filter(n => n.type === 'FulfillmentCenter');
+  const ibs         = nodes.filter(n => n.type === 'IBCenter');
+  const fcCritical  = fcs.filter(n => n.inventory <= 0);
+  const fcLow       = fcs.filter(n => n.inventory > 0 && n.inventory < n.safety_stock);
+  const fcHealthy   = fcs.filter(n => n.inventory >= n.safety_stock);
+  const ibLow       = ibs.filter(n => n.inventory < n.safety_stock);
+
+  let invLines = [];
+  if (fcCritical.length > 0)
+    invLines.push(`<span class="health-warn">⚠ ${fcCritical.length} FC(s) at zero stock: ${fcCritical.map(n=>'FC'+n.id).join(', ')}</span>`);
+  if (fcLow.length > 0)
+    invLines.push(`<span class="health-risk">↓ ${fcLow.length} FC(s) below safety stock: ${fcLow.map(n=>'FC'+n.id+' ('+n.inventory+'/'+n.safety_stock+')').join(', ')}</span>`);
+  if (fcHealthy.length === fcs.length && fcCritical.length === 0)
+    invLines.push(`<span class="health-ok">✓ All ${fcs.length} FCs above safety stock</span>`);
+  if (ibLow.length > 0)
+    invLines.push(`<span class="health-risk">↓ ${ibLow.length} IB(s) running low: ${ibLow.map(n=>'IB'+n.id).join(', ')}</span>`);
+  else
+    invLines.push(`<span class="health-ok">✓ All IBCenters well-stocked</span>`);
+  if (invEl) invEl.innerHTML = invLines.join('<br>');
+
+  // ── Disruption analysis ─────────────────────────────────────
+  const laneDisruptions = disruptions.filter(d => d.type === 'lane');
+  const nodeDisruptions = disruptions.filter(d => d.type !== 'lane');
+  const highSev = disruptions.filter(d => d.severity >= 0.6);
+  let disLines = [];
+  if (disruptions.length === 0) {
+    disLines.push(`<span class="health-ok">✓ No active disruptions — all lanes and nodes operational</span>`);
+  } else {
+    if (laneDisruptions.length > 0)
+      disLines.push(`<span class="health-risk">↓ ${laneDisruptions.length} lane(s) disrupted: ${laneDisruptions.map(d=>'L'+d.target_id+' ('+Math.round(d.severity*100)+'%)').join(', ')}</span>`);
+    if (nodeDisruptions.length > 0)
+      disLines.push(`<span class="health-warn">⚠ ${nodeDisruptions.length} node disruption(s) active</span>`);
+    if (highSev.length > 0)
+      disLines.push(`<span class="health-warn">⚠ ${highSev.length} high-severity event(s) (≥60%) requiring priority repair</span>`);
+    const minRemaining = Math.min(...disruptions.map(d => d.remaining || 0));
+    if (minRemaining <= 2)
+      disLines.push(`<span class="health-ok">↑ Earliest disruption expires in ${minRemaining}t</span>`);
+  }
+  if (disEl) disEl.innerHTML = disLines.join('<br>');
+
+  // ── Risk & Outlook ──────────────────────────────────────────
+  const totalBacklog = demand.reduce((s, r) => s + (r.backlog || 0), 0);
+  const laborStrained = demand.filter(r => r.labor_capacity_base > 0 && r.labor_capacity / r.labor_capacity_base < 0.75);
+  let riskLines = [];
+
+  // Backlog trend
+  if (totalBacklog === 0) {
+    riskLines.push(`<span class="health-ok">✓ Zero backlog — demand fully fulfilled</span>`);
+  } else if (totalBacklog < 50) {
+    riskLines.push(`<span class="health-risk">↑ Backlog building: ${totalBacklog} units pending</span>`);
+  } else {
+    riskLines.push(`<span class="health-warn">⚠ High backlog: ${totalBacklog} units — fill rate at risk</span>`);
+  }
+
+  // Labor strain
+  if (laborStrained.length > 0)
+    riskLines.push(`<span class="health-risk">↓ Labor below 75% at ${laborStrained.map(r=>'FC'+r.node_id).join(', ')} — throughput constrained</span>`);
+
+  // Cost trend
+  if (finHistory.length >= 3) {
+    const last3 = finHistory.slice(-3);
+    const cpuTrend = last3[2].cost_per_unit_shipped - last3[0].cost_per_unit_shipped;
+    if (cpuTrend > 2)
+      riskLines.push(`<span class="health-risk">↑ Cost/unit rising +€${cpuTrend.toFixed(2)} over last 3 ticks</span>`);
+    else if (cpuTrend < -2)
+      riskLines.push(`<span class="health-ok">↓ Cost/unit improving −€${Math.abs(cpuTrend).toFixed(2)} over last 3 ticks</span>`);
+  }
+
+  // IB buffer risk
+  ibs.forEach(n => {
+    const pct = n.capacity > 0 ? n.inventory / n.capacity : 1;
+    if (pct < 0.25)
+      riskLines.push(`<span class="health-warn">⚠ IB${n.id} at ${(pct*100).toFixed(0)}% capacity — replenishment lag risk</span>`);
+  });
+
+  if (riskLines.length === 0)
+    riskLines.push(`<span class="health-ok">✓ No foreseeable risks — network operating within normal parameters</span>`);
+  if (riskEl) riskEl.innerHTML = riskLines.join('<br>');
+
+  // ── Overall status ──────────────────────────────────────────
+  let statusClass, statusText;
+  if (fcCritical.length > 0 || totalBacklog >= 50 || highSev.length > 0) {
+    statusClass = 'status-critical';
+    statusText = '🔴 CRITICAL — Immediate intervention required';
+  } else if (fcLow.length > 0 || disruptions.length > 0 || totalBacklog > 0 || laborStrained.length > 0) {
+    statusClass = 'status-warning';
+    statusText = '🟡 STRESSED — Network under pressure, monitor closely';
+  } else {
+    statusClass = 'status-healthy';
+    statusText = '🟢 HEALTHY — All nodes and lanes operating nominally';
+  }
+  statusBar.className = `health-status ${statusClass}`;
+  statusBar.textContent = statusText;
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // Agent Log (with reasoning expand)
@@ -710,16 +1027,13 @@ function updateLog(state) {
   let html = '';
   entries.forEach((e, idx) => {
     const ac = AGENT_COLORS[e.agent_name] || { css: '', hex: '#ccc' };
-    const action = e.action_taken.length > 140
-      ? e.action_taken.substring(0, 140) + '…'
-      : e.action_taken;
     const hasReasoning = e.reasoning && e.reasoning.trim().length > 0;
 
     html += `
       <div class="log-entry ${hasReasoning ? 'has-reasoning' : ''}" ${hasReasoning ? `onclick="toggleReasoning(${idx})"` : ''}>
         <span class="log-tick">T${e.tick}</span>
         <span class="log-agent ${ac.css}">${e.agent_name}</span>
-        <span class="log-action">${escapeHtml(action)}${hasReasoning ? ' <span class="reasoning-toggle">🧠</span>' : ''}</span>
+        <span class="log-action">${escapeHtml(e.action_taken)}${hasReasoning ? ' <span class="reasoning-toggle">🧠</span>' : ''}</span>
       </div>`;
     if (hasReasoning) {
       html += `<div class="log-reasoning" id="reasoning-${idx}" style="display:none;">
@@ -748,6 +1062,56 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+
+function initTickControls() {
+  const btnAuto   = document.getElementById('btn-mode-auto');
+  const btnManual = document.getElementById('btn-mode-manual');
+  const btnTick   = document.getElementById('btn-tick');
+  const statusEl  = document.getElementById('tick-status');
+  if (!btnAuto) return;
+
+  function setMode(mode) {
+    if (socket) socket.emit('set_tick_mode', { mode });
+    const isManual = mode === 'manual';
+    btnAuto.classList.toggle('active', !isManual);
+    btnManual.classList.toggle('active', isManual);
+    btnTick.disabled = !isManual;
+    btnTick.classList.toggle('manual-ready', isManual);
+    btnTick.title = isManual ? 'Click to run the next tick' : 'Switch to Manual mode first';
+    statusEl.textContent = isManual
+      ? 'Mode: Manual — click button to advance'
+      : 'Mode: Auto — ticks run automatically';
+  }
+
+  btnAuto.addEventListener('click',   () => setMode('auto'));
+  btnManual.addEventListener('click', () => setMode('manual'));
+
+  btnTick.addEventListener('click', () => {
+    if (!socket) return;
+    btnTick.disabled = true;
+    btnTick.textContent = '⏳ Running…';
+    statusEl.textContent = 'Executing tick…';
+    socket.emit('trigger_tick');
+  });
+
+  if (socket) {
+    socket.on('tick_trigger_ack', (data) => {
+      if (data.status === 'done') {
+        statusEl.textContent = `Tick ${data.tick} complete. Click to advance.`;
+      } else if (data.status === 'busy') {
+        statusEl.textContent = 'Tick still running, please wait.';
+      } else if (data.status === 'error') {
+        statusEl.textContent = `Error: ${data.msg}`;
+      }
+      btnTick.disabled = false;
+      btnTick.textContent = '▶ Run Next Tick';
+    });
+
+    socket.on('tick_mode_ack', (data) => {
+      // Server confirmed mode — no UI action needed, already set locally
+    });
+  }
+}
 
 function initManualControls() {
   const btnInject = document.getElementById('btn-inject');
@@ -793,4 +1157,6 @@ document.addEventListener('DOMContentLoaded', () => {
   connectSocket();
   initReplay();
   initManualControls();
+  // tick controls need socket, so init after connect
+  setTimeout(initTickControls, 300);
 });
