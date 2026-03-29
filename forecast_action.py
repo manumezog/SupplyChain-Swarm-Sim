@@ -8,7 +8,7 @@ import random
 import math
 import sys
 
-from token_utils import call_claude, extract_json, log_tokens
+from token_utils import call_claude, extract_json, log_tokens, MODEL_OPUS
 
 DB_PATH     = "C:/Users/manum/Desktop/IA Projects/SupplyChain-Swarm-Sim/sim_state.db"
 TICK        = int(sys.argv[1]) if len(sys.argv) > 1 else 1
@@ -81,7 +81,7 @@ def run():
                 f'{{ "FC3": <int>, "FC4": <int>, "FC5": <int> }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=1024)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=128, model=MODEL_OPUS)
 
             try:
                 data = extract_json(text)

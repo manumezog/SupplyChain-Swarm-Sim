@@ -126,7 +126,7 @@ def run():
                 f'"transport": {{"1": <L1>, "2": <L2>, "3": <L3>, "4": <L4>}} }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=2048)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=256)
 
             try:
                 data = extract_json(text)

@@ -1,6 +1,6 @@
 """
 Shared Claude API client and token utilities.
-All agents call Claude Opus 4.6 with adaptive thinking.
+Agents use Haiku by default; forecast uses Opus for accuracy.
 
 API key: set ANTHROPIC_API_KEY environment variable, or create a .env file
 in the project directory with:  ANTHROPIC_API_KEY=sk-ant-...
@@ -25,10 +25,13 @@ try:
 except ImportError:
     _CLAUDE_AVAILABLE = False
 
-# Claude Opus 4.6 pricing
-USD_PER_M_INPUT  = 5.0
-USD_PER_M_OUTPUT = 25.0
+# Approximate blended pricing (Haiku dominant, Opus for forecast)
+USD_PER_M_INPUT  = 1.0
+USD_PER_M_OUTPUT = 5.0
 EUR_PER_USD      = 0.92
+
+MODEL_HAIKU = "claude-haiku-4-5-20251001"
+MODEL_OPUS  = "claude-opus-4-6"
 
 
 def calc_cost_eur(input_tokens: int, output_tokens: int) -> float:
@@ -39,20 +42,16 @@ def calc_cost_eur(input_tokens: int, output_tokens: int) -> float:
     return round(cost_usd * EUR_PER_USD, 6)
 
 
-def call_claude(prompt: str, max_tokens: int = 2048) -> tuple[str, int, int]:
-    """Call Claude Opus 4.6 with adaptive thinking.
-    Returns (text_response, input_tokens, output_tokens).
-    """
+def call_claude(prompt: str, max_tokens: int = 512, model: str = MODEL_HAIKU) -> tuple[str, int, int]:
+    """Call Claude. Returns (text_response, input_tokens, output_tokens)."""
     if not _CLAUDE_AVAILABLE:
         raise ImportError("anthropic package not installed. Run: pip install anthropic")
     client = _anthropic.Anthropic()
-    with client.messages.stream(
-        model="claude-opus-4-6",
+    msg = client.messages.create(
+        model=model,
         max_tokens=max_tokens,
-        thinking={"type": "adaptive"},
         messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        msg = stream.get_final_message()
+    )
     text = ""
     for block in msg.content:
         if block.type == "text":

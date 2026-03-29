@@ -158,7 +158,7 @@ def run():
                 f'}}] }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=2048)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=256)
 
             try:
                 data = extract_json(text)

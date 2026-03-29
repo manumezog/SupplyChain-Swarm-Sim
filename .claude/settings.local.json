@@ -34,7 +34,8 @@
       "Bash(\"C:/Users/manum/anaconda3/python.exe\" -X utf8 forecast_action.py 1)",
       "Bash(ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\" \"C:/Users/manum/anaconda3/python.exe\" -X utf8 forecast_action.py 1)",
       "Bash(grep -E \"\\\\.py$|\\\\.db$|\\\\.md$|\\\\.env\")",
-      "Read(//c/Users/manum/Desktop/IA Projects/SupplyChain-Swarm-Sim/**)"
+      "Read(//c/Users/manum/Desktop/IA Projects/SupplyChain-Swarm-Sim/**)",
+      "Bash(grep -E \"\\\\.\\(py|db|md|json\\)$\")"
     ]
   }
 }

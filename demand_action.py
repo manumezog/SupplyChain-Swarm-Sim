@@ -113,7 +113,7 @@ def run():
                 f'{{ "3": <float>, "4": <float>, "5": <float> }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=512)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=64)
 
             try:
                 flex_decisions = extract_json(text)

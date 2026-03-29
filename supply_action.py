@@ -99,7 +99,7 @@ def run():
                 f'{{ "IB1": <int>, "IB2": <int> }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=1024)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=64)
 
             try:
                 data = extract_json(text)

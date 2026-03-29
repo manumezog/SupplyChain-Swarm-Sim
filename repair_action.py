@@ -85,7 +85,7 @@ def run():
                 f'Return ONLY valid JSON: {{ "resolve_id": <disruption_id>, "rationale": "<short reason>" }}'
             )
 
-            text, in_tok, out_tok = call_claude(prompt, max_tokens=512)
+            text, in_tok, out_tok = call_claude(prompt, max_tokens=96)
 
             try:
                 data = extract_json(text)

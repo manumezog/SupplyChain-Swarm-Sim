@@ -178,7 +178,7 @@ def run():
                 f"No JSON needed — just the plain text description."
             )
 
-            narrative_text, in_tok, out_tok = call_claude(prompt, max_tokens=128)
+            narrative_text, in_tok, out_tok = call_claude(prompt, max_tokens=32)
             description = narrative_text.strip().rstrip('.')[:120]
             if not description:
                 description = f"{desc_base} at {target_label}"
