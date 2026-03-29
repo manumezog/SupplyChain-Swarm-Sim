@@ -1,33 +1,71 @@
 import sqlite3
 import time
 import os
+import json
 
 DB_PATH = "sim_state.db"
+_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# IBCenter = Inbound Center (formerly SortCenter): receives stock, ships to FulfillmentCenters
-LANE_TO_IB    = {1: 1, 2: 1, 3: 2, 4: 2}    # lane_id -> source IBCenter node_id
-INBOUND_LANES = {3: [1], 4: [2, 3], 5: [4]}  # FC node_id -> list of inbound lane ids
-# Weighted share of each FC's demand borne by each IB (used by supply agent for target inventory)
-IB_FC_WEIGHTS = {1: {3: 1.0, 4: 0.5}, 2: {4: 0.5, 5: 1.0}}
+# ── Load network topology from config (or use defaults) ──────
+_net_config_path = os.path.join(_PROJECT_DIR, "network_config.json")
+if os.path.exists(_net_config_path):
+    with open(_net_config_path) as _f:
+        _NET = json.load(_f)
+else:
+    _NET = None
 
-# (id, type, capacity, safety_stock, inventory, labor_capacity_base)
-# IBCenter labor_capacity_base = outbound dispatch capacity (units/tick they can load)
-NODES = [
-    (1, "IBCenter",           1200, 200, 1200, 150),
-    (2, "IBCenter",           1000, 150, 1000, 120),
-    (3, "FulfillmentCenter",   800, 100,  800, 100),
-    (4, "FulfillmentCenter",   950, 120,  950, 125),
-    (5, "FulfillmentCenter",   700,  80,  700,  78),
-]
+# IBCenter = Inbound Center: receives stock, ships to FulfillmentCenters
+if _NET:
+    LANE_TO_IB    = {int(k): v for k, v in _NET["lane_to_ib"].items()}
+    INBOUND_LANES = {int(k): v for k, v in _NET["inbound_lanes"].items()}
+    IB_FC_WEIGHTS = {int(k): {int(fk): fv for fk, fv in v.items()}
+                     for k, v in _NET["ib_fc_weights"].items()}
+    MAX_EXTERNAL_INFLOW = {int(k): v for k, v in _NET["max_external_inflow"].items()}
+    BASE_DEMAND   = {int(k): v for k, v in _NET["base_demand"].items()}
+    LANE_TC_MAX   = {int(k): v for k, v in _NET.get("lane_tc_max", {}).items()}
+    LANE_TC_BASE  = {int(k): v for k, v in _NET.get("lane_tc_base", {}).items()}
+    DISRUPTION_PROBABILITY  = _NET.get("disruption_probability", 0.30)
+    MAX_ACTIVE_DISRUPTIONS  = _NET.get("max_active_disruptions", 3)
 
-# transport_cost = cost per unit shipped on this lane (economic efficiency metric)
-# Higher cost = more expensive route, NOT more disruptible
-LANES = [
-    (1, 1, 3, 12.5, "active"),
-    (2, 1, 4, 15.0, "active"),
-    (3, 2, 4, 11.0, "active"),
-    (4, 2, 5, 14.0, "active"),
-]
+    NODES = [
+        (n["id"], n["type"], n["capacity"], n["safety_stock"],
+         n["initial_inventory"], n["labor_capacity_base"],
+         n.get("hourly_labor_cost", 20.0), n.get("units_per_hour", 10.0))
+        for n in _NET["nodes"]
+    ]
+    LANES = [
+        (l["id"], l["origin"], l["destination"], l["transport_cost"], "active")
+        for l in _NET["lanes"]
+    ]
+else:
+    # Hardcoded defaults (backward compatibility)
+    LANE_TO_IB    = {1: 1, 2: 1, 3: 2, 4: 2}
+    INBOUND_LANES = {3: [1], 4: [2, 3], 5: [4]}
+    IB_FC_WEIGHTS = {1: {3: 1.0, 4: 0.5}, 2: {4: 0.5, 5: 1.0}}
+    MAX_EXTERNAL_INFLOW = {1: 350, 2: 280}
+    BASE_DEMAND   = {3: 70, 4: 90, 5: 55}
+    LANE_TC_MAX   = {1: 350, 2: 300, 3: 280, 4: 250}
+    LANE_TC_BASE  = {1: 200, 2: 180, 3: 160, 4: 150}
+    DISRUPTION_PROBABILITY  = 0.30
+    MAX_ACTIVE_DISRUPTIONS  = 3
+
+    NODES = [
+        (1, "IBCenter",           1200, 200, 1200, 150, 15.0, 20.0),
+        (2, "IBCenter",           1000, 150, 1000, 120,  9.0, 12.0),
+        (3, "FulfillmentCenter",   800, 100,  800, 100, 22.5, 15.0),
+        (4, "FulfillmentCenter",   950, 120,  950, 125, 20.0, 18.0),
+        (5, "FulfillmentCenter",   700,  80,  700,  78, 12.0, 10.0),
+    ]
+    LANES = [
+        (1, 1, 3, 12.5, "active"),
+        (2, 1, 4, 15.0, "active"),
+        (3, 2, 4, 11.0, "active"),
+        (4, 2, 5, 14.0, "active"),
+    ]
+
+# Derived: FC and IB node IDs
+FC_IDS = [n[0] for n in NODES if n[1] == "FulfillmentCenter"]
+IB_IDS = [n[0] for n in NODES if n[1] == "IBCenter"]
 
 
 def get_conn(retries=5, base_delay=0.1):
@@ -52,7 +90,9 @@ def init_db():
             capacity             INTEGER NOT NULL,
             safety_stock         INTEGER NOT NULL,
             inventory            INTEGER NOT NULL,
-            labor_capacity_base  INTEGER NOT NULL DEFAULT 0
+            labor_capacity_base  INTEGER NOT NULL DEFAULT 0,
+            hourly_labor_cost    REAL    NOT NULL DEFAULT 20.0,
+            units_per_hour       REAL    NOT NULL DEFAULT 10.0
         );
         CREATE TABLE IF NOT EXISTS lanes (
             id             INTEGER PRIMARY KEY,
@@ -65,7 +105,8 @@ def init_db():
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             tick         INTEGER NOT NULL,
             agent_name   TEXT    NOT NULL,
-            action_taken TEXT    NOT NULL
+            action_taken TEXT    NOT NULL,
+            reasoning    TEXT
         );
         CREATE TABLE IF NOT EXISTS demand (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +151,8 @@ def init_db():
             agent_name    TEXT    NOT NULL,
             input_tokens  INTEGER NOT NULL,
             output_tokens INTEGER NOT NULL,
-            cost_eur      REAL    NOT NULL
+            cost_eur      REAL    NOT NULL,
+            model_name    TEXT
         );
         CREATE TABLE IF NOT EXISTS snapshots (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +160,24 @@ def init_db():
             node_id   INTEGER NOT NULL REFERENCES nodes(id),
             inventory INTEGER NOT NULL,
             UNIQUE(tick, node_id)
+        );
+        CREATE TABLE IF NOT EXISTS transport (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            tick      INTEGER NOT NULL,
+            lane_id   INTEGER NOT NULL REFERENCES lanes(id),
+            qty       INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS demand_modifiers (
+            node_id    INTEGER PRIMARY KEY REFERENCES nodes(id),
+            multiplier REAL    NOT NULL DEFAULT 1.0,
+            active     INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS financials (
+            tick                  INTEGER PRIMARY KEY,
+            total_labor_cost      REAL    NOT NULL,
+            total_transport_cost  REAL    NOT NULL,
+            total_units_shipped   INTEGER NOT NULL,
+            cost_per_unit_shipped REAL    NOT NULL
         );
         CREATE TABLE IF NOT EXISTS forecast (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +190,14 @@ def init_db():
             method            TEXT    NOT NULL,
             UNIQUE(forecast_for_tick, node_id)
         );
+        CREATE TABLE IF NOT EXISTS demand_modifiers (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id    INTEGER NOT NULL REFERENCES nodes(id),
+            multiplier REAL    NOT NULL DEFAULT 1.0,
+            description TEXT,
+            active     INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
         CREATE INDEX IF NOT EXISTS idx_snapshots_node_tick ON snapshots(node_id, tick);
         CREATE INDEX IF NOT EXISTS idx_token_log_tick      ON token_log(tick);
         CREATE INDEX IF NOT EXISTS idx_forecast_node_tick  ON forecast(forecast_for_tick, node_id);
@@ -137,7 +205,7 @@ def init_db():
     """)
     cur.execute("SELECT COUNT(*) FROM nodes")
     if cur.fetchone()[0] == 0:
-        cur.executemany("INSERT INTO nodes VALUES (?,?,?,?,?,?)", NODES)
+        cur.executemany("INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)", NODES)
         cur.executemany("INSERT INTO lanes VALUES (?,?,?,?,?)", LANES)
     conn.commit()
     conn.close()
