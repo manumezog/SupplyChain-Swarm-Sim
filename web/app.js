@@ -13,6 +13,15 @@ let replayMode = false;      // true = scrubbing historical ticks
 let replayPlaying = false;   // true = auto-advancing replay
 let replayInterval = null;
 
+// ── Node display name mapping (DB id → friendly label) ──────────
+// IB nodes: 1→IB1, 2→IB2, 6→IB3   |   FC nodes: 3→FC1, 4→FC2, 5→FC3, 7→FC4, 8→FC5, 9→FC6
+const NODE_DISPLAY = {
+  1: 'IB1', 2: 'IB2', 6: 'IB3',
+  3: 'FC1', 4: 'FC2', 5: 'FC3',
+  7: 'FC4', 8: 'FC5', 9: 'FC6',
+};
+function nodeLabel(id) { return NODE_DISPLAY[id] || ('Node' + id); }
+
 const AGENT_COLORS = {
   Disruptor: { css: 'agent-disruptor', hex: '#ff5252' },
   Repair:    { css: 'agent-repair',    hex: '#69f0ae' },
@@ -29,12 +38,12 @@ const TOPO = {
     1: { x: 105, y:  85, label: 'IB1', type: 'ib' },
     2: { x: 105, y: 215, label: 'IB2', type: 'ib' },
     6: { x: 105, y: 345, label: 'IB3', type: 'ib' },
-    3: { x: 470, y:  45, label: 'FC3', type: 'fc' },
-    4: { x: 470, y: 115, label: 'FC4', type: 'fc' },
-    5: { x: 470, y: 185, label: 'FC5', type: 'fc' },
-    7: { x: 470, y: 255, label: 'FC7', type: 'fc' },
-    8: { x: 470, y: 325, label: 'FC8', type: 'fc' },
-    9: { x: 470, y: 395, label: 'FC9', type: 'fc' },
+    3: { x: 470, y:  45, label: 'FC1', type: 'fc' },
+    4: { x: 470, y: 115, label: 'FC2', type: 'fc' },
+    5: { x: 470, y: 185, label: 'FC3', type: 'fc' },
+    7: { x: 470, y: 255, label: 'FC4', type: 'fc' },
+    8: { x: 470, y: 325, label: 'FC5', type: 'fc' },
+    9: { x: 470, y: 395, label: 'FC6', type: 'fc' },
   },
   suppliers: [
     { x: 25, y:  85, label: 'Supplier → IB1', node: 1 },
@@ -439,13 +448,15 @@ function updateInventory(state) {
     const pct = n.capacity > 0 ? (n.inventory / n.capacity) * 100 : 0;
     const safetyPct = n.capacity > 0 ? (n.safety_stock / n.capacity) * 100 : 0;
     let color = n.inventory <= 0 ? 'red' : n.inventory < n.safety_stock ? 'yellow' : 'green';
-    const typeLabel = n.type === 'IBCenter' ? 'IB' : 'FC';
+    const displayName = nodeLabel(n.id);
+    const typeLabel = displayName.slice(0, 2);   // 'IB' or 'FC'
+    const idPart    = displayName.slice(2);       // '1', '2', …
 
     html += `
       <div class="inv-node">
         <div class="inv-label">
           <div class="node-type">${typeLabel}</div>
-          <div class="node-id">${n.id}</div>
+          <div class="node-id">${idPart}</div>
         </div>
         <div class="inv-bar-wrap">
           <div class="inv-bar-track">
@@ -535,7 +546,7 @@ function updateDemand(state) {
 
     const laborPctVal = (laborPct * 100).toFixed(0);
     html += `<tr>
-      <td>FC${r.node_id}</td>
+      <td>${nodeLabel(r.node_id)}</td>
       <td class="val-white">${r.orders}</td>
       <td class="${fcstClass}">${fcstVal}</td>
       <td class="${maeClass}">${maeVal}</td>
@@ -569,7 +580,7 @@ function updateDisruptions(state) {
   items.forEach(d => {
     const typeClass = d.type === 'lane' ? 'lane-type' : d.type === 'ib_node' ? 'ib-type' : 'fc-type';
     const sevClass  = d.severity >= 0.6 ? 'sev-high' : d.severity >= 0.3 ? 'sev-medium' : 'sev-low';
-    let targetLabel = d.type === 'lane' ? `Lane ${d.target_id}` : d.type === 'ib_node' ? `IB${d.target_id}` : `FC${d.target_id}`;
+    let targetLabel = d.type === 'lane' ? `Lane ${d.target_id}` : nodeLabel(d.target_id);
 
     html += `
       <div class="disruption-item ${typeClass}">
@@ -925,13 +936,13 @@ function updateNetworkHealth(state) {
 
   let invLines = [];
   if (fcCritical.length > 0)
-    invLines.push(`<span class="health-warn">⚠ ${fcCritical.length} FC(s) at zero stock: ${fcCritical.map(n=>'FC'+n.id).join(', ')}</span>`);
+    invLines.push(`<span class="health-warn">⚠ ${fcCritical.length} FC(s) at zero stock: ${fcCritical.map(n=>nodeLabel(n.id)).join(', ')}</span>`);
   if (fcLow.length > 0)
-    invLines.push(`<span class="health-risk">↓ ${fcLow.length} FC(s) below safety stock: ${fcLow.map(n=>'FC'+n.id+' ('+n.inventory+'/'+n.safety_stock+')').join(', ')}</span>`);
+    invLines.push(`<span class="health-risk">↓ ${fcLow.length} FC(s) below safety stock: ${fcLow.map(n=>nodeLabel(n.id)+' ('+n.inventory+'/'+n.safety_stock+')').join(', ')}</span>`);
   if (fcHealthy.length === fcs.length && fcCritical.length === 0)
     invLines.push(`<span class="health-ok">✓ All ${fcs.length} FCs above safety stock</span>`);
   if (ibLow.length > 0)
-    invLines.push(`<span class="health-risk">↓ ${ibLow.length} IB(s) running low: ${ibLow.map(n=>'IB'+n.id).join(', ')}</span>`);
+    invLines.push(`<span class="health-risk">↓ ${ibLow.length} IB(s) running low: ${ibLow.map(n=>nodeLabel(n.id)).join(', ')}</span>`);
   else
     invLines.push(`<span class="health-ok">✓ All IBCenters well-stocked</span>`);
   if (invEl) invEl.innerHTML = invLines.join('<br>');
@@ -972,7 +983,7 @@ function updateNetworkHealth(state) {
 
   // Labor strain
   if (laborStrained.length > 0)
-    riskLines.push(`<span class="health-risk">↓ Labor below 75% at ${laborStrained.map(r=>'FC'+r.node_id).join(', ')} — throughput constrained</span>`);
+    riskLines.push(`<span class="health-risk">↓ Labor below 75% at ${laborStrained.map(r=>nodeLabel(r.node_id)).join(', ')} — throughput constrained</span>`);
 
   // Cost trend
   if (finHistory.length >= 3) {
@@ -988,7 +999,7 @@ function updateNetworkHealth(state) {
   ibs.forEach(n => {
     const pct = n.capacity > 0 ? n.inventory / n.capacity : 1;
     if (pct < 0.25)
-      riskLines.push(`<span class="health-warn">⚠ IB${n.id} at ${(pct*100).toFixed(0)}% capacity — replenishment lag risk</span>`);
+      riskLines.push(`<span class="health-warn">⚠ ${nodeLabel(n.id)} at ${(pct*100).toFixed(0)}% capacity — replenishment lag risk</span>`);
   });
 
   if (riskLines.length === 0)

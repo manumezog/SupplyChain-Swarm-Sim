@@ -147,30 +147,7 @@
       </div>
     </section>
 
-    <!-- 4. Demand / Forecast / Labor (left side) -->
-    <section class="card panel-demand" id="panel-demand">
-      <div class="card-header">
-        <h2>Demand · Forecast · Labor</h2>
-      </div>
-      <div class="card-body">
-        <table class="data-table" id="demand-table">
-          <thead>
-            <tr>
-              <th>Node</th>
-              <th>Orders</th>
-              <th>Forecast</th>
-              <th>MAE</th>
-              <th>Labor (% / units)</th>
-              <th>Shipped</th>
-              <th>Backlog</th>
-            </tr>
-          </thead>
-          <tbody id="demand-tbody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- 5. API Token Cost (right side) -->
+    <!-- 4. API Token Cost (left side, col 1) -->
     <section class="card panel-tokens" id="panel-tokens">
       <div class="card-header">
         <h2>API Token Cost</h2>
@@ -205,6 +182,29 @@
             <tbody id="token-tbody"></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- 5. Demand / Forecast / Labor (right side, col 2) -->
+    <section class="card panel-demand" id="panel-demand">
+      <div class="card-header">
+        <h2>Demand · Forecast · Labor</h2>
+      </div>
+      <div class="card-body">
+        <table class="data-table" id="demand-table">
+          <thead>
+            <tr>
+              <th>Node</th>
+              <th>Orders</th>
+              <th>Forecast</th>
+              <th>MAE</th>
+              <th>Labor (% / units)</th>
+              <th>Shipped</th>
+              <th>Backlog</th>
+            </tr>
+          </thead>
+          <tbody id="demand-tbody"></tbody>
+        </table>
       </div>
     </section>
 

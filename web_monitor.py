@@ -437,10 +437,12 @@ def handle_set_demand_modifier(data):
             )
             
         tick = get_current_tick()
+        _NODE_DISPLAY = {1:'IB1',2:'IB2',6:'IB3',3:'FC1',4:'FC2',5:'FC3',7:'FC4',8:'FC5',9:'FC6'}
+        nname = _NODE_DISPLAY.get(int(node_id), f'Node{node_id}')
         action = "Reset demand" if multiplier == 1.0 else f"Applied {multiplier}x demand spike"
         cur.execute(
             "INSERT INTO log (tick, agent_name, action_taken, reasoning) VALUES (?,?,?,?)",
-            (tick, "User", f"{action} for FC{node_id}", "Dashboard control")
+            (tick, "User", f"{action} for {nname}", "Dashboard control")
         )
         conn.commit()
         conn.close()
