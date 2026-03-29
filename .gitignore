@@ -1,1 +1,16 @@
+# API keys
 .env
+
+# Simulation state (runtime artifact)
+sim_state.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Claude Code worktrees
+.claude/worktrees/

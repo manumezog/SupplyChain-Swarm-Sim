@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Live dashboard for the Adversarial Supply Chain Swarm Simulator — real-time monitoring of AI agent decisions, inventory health, and network disruptions.">
+  <title>SwarmChain-Sim · Live Dashboard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ═══ Header ═══ -->
+  <header class="header" id="header">
+    <div class="header-brand">
+      <span class="logo">⚡ SWARMCHAIN-SIM</span>
+    </div>
+    <div class="header-info">
+      <span class="tick-badge" id="tick-value">Tick 0</span>
+      <span class="timestamp" id="timestamp">--</span>
+      <span class="mode-badge" id="mode-badge">LIVE</span>
+      <div class="connection-dot" id="conn-dot" title="WebSocket status"></div>
+    </div>
+  </header>
+
+  <!-- ═══ Replay Bar ═══ -->
+  <div class="replay-bar" id="replay-bar">
+    <button class="replay-btn" id="replay-prev" title="Previous tick">⏮</button>
+    <button class="replay-btn" id="replay-play" title="Play/Pause">▶</button>
+    <button class="replay-btn" id="replay-next" title="Next tick">⏭</button>
+    <input type="range" class="replay-slider" id="replay-slider" min="0" max="0" value="0">
+    <span class="replay-tick-label" id="replay-tick-label">0 / 0</span>
+    <button class="replay-btn replay-live-btn" id="replay-live" title="Go to live">⚡ LIVE</button>
+  </div>
+
+  <!-- ═══ Dashboard Grid ═══ -->
+  <main class="dashboard">
+
+    <!-- 1. Network Health (now includes Inventory Health as subsection) -->
+    <section class="card panel-network-health" id="panel-network-health">
+      <div class="card-header">
+        <h2>Network Health · Planner Assessment</h2>
+        <span class="badge" id="health-tick-badge">Tick 0</span>
+      </div>
+      <div class="card-body">
+        <div id="health-status-bar" class="health-status status-healthy">● Initializing…</div>
+        <div class="health-grid">
+          <div class="health-section">
+            <div class="health-section-title">Inventory Status</div>
+            <div class="health-body" id="health-inventory">—</div>
+          </div>
+          <div class="health-section">
+            <div class="health-section-title">Disruptions &amp; Transport</div>
+            <div class="health-body" id="health-disruptions">—</div>
+          </div>
+          <div class="health-section">
+            <div class="health-section-title">Risks &amp; Outlook</div>
+            <div class="health-body" id="health-risks">—</div>
+          </div>
+        </div>
+
+        <!-- Inventory Health subsection -->
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:10px;">Inventory Health (9 Nodes)</div>
+          <div id="inventory-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. God Mode controls + Active Disruptions (right sidebar) -->
+    <section class="card panel-controls" id="panel-controls">
+      <div class="card-header">
+        <h2>God Mode</h2>
+      </div>
+      <div class="card-body controls-grid">
+
+        <div class="control-group">
+          <h3>Tick Control</h3>
+          <div class="tick-mode-toggle">
+            <button id="btn-mode-auto"   class="mode-btn active">Auto</button>
+            <button id="btn-mode-manual" class="mode-btn">Manual</button>
+          </div>
+          <button id="btn-tick" class="action-btn tick-btn" disabled title="Switch to Manual mode first">
+            ▶ Run Next Tick
+          </button>
+          <div class="tick-status" id="tick-status">Mode: Auto — ticks run automatically</div>
+        </div>
+
+        <div class="control-group">
+          <h3>Inject Disruption</h3>
+          <select id="inject-type">
+            <option value="fc_node">Fulfillment Center</option>
+            <option value="ib_node">Inbound Center</option>
+            <option value="lane">Transport Lane</option>
+          </select>
+          <input type="number" id="inject-target" placeholder="Target ID (e.g. 3)" min="1" max="10">
+          <input type="number" id="inject-sev" placeholder="Severity 0.1–1.0" min="0.1" max="1.0" step="0.1" value="0.5">
+          <button id="btn-inject" class="action-btn">Inject Disruption</button>
+        </div>
+
+        <div class="control-group">
+          <h3>Demand Spike / Drop</h3>
+          <input type="number" id="demand-node" placeholder="FC Node ID" min="3" max="9">
+          <select id="demand-mult">
+            <option value="1.0">Reset (1.0×)</option>
+            <option value="1.25">Spike +25%</option>
+            <option value="1.50">Surge +50%</option>
+            <option value="0.75">Drop −25%</option>
+            <option value="0.50">Crash −50%</option>
+          </select>
+          <button id="btn-demand-mod" class="action-btn">Apply Modifier</button>
+        </div>
+
+      </div>
+
+      <!-- Active Disruptions subsection in sidebar -->
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);padding:14px 16px;">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:8px;">
+          Active Disruptions <span class="badge" id="disruption-count">0</span>
+        </div>
+        <div class="disruption-list" id="disruption-list">
+          <div class="no-disruptions">No active disruptions — network is healthy ✓</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Network Topology — full width -->
+    <section class="card panel-topology" id="panel-topology">
+      <div class="card-header">
+        <h2>Network Topology</h2>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span style="font-size:10px;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">
+            Panel: INV=inventory% · LAB=labor staffing% · BLG=backlog days · €/U=var.cost/unit
+          </span>
+          <span class="badge" id="topo-badge">Live</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <svg id="topology-svg" class="topology-svg" viewBox="0 0 620 430" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </section>
+
+    <!-- 4. Demand / Forecast / Labor (left side) -->
+    <section class="card panel-demand" id="panel-demand">
+      <div class="card-header">
+        <h2>Demand · Forecast · Labor</h2>
+      </div>
+      <div class="card-body">
+        <table class="data-table" id="demand-table">
+          <thead>
+            <tr>
+              <th>Node</th>
+              <th>Orders</th>
+              <th>Forecast</th>
+              <th>MAE</th>
+              <th>Labor (% / units)</th>
+              <th>Shipped</th>
+              <th>Backlog</th>
+            </tr>
+          </thead>
+          <tbody id="demand-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 5. API Token Cost (right side) -->
+    <section class="card panel-tokens" id="panel-tokens">
+      <div class="card-header">
+        <h2>API Token Cost</h2>
+        <span class="badge" id="model-badge">Multi-Model</span>
+      </div>
+      <div class="card-body">
+        <div class="token-summary">
+          <div class="token-metric">
+            <div class="metric-label">This Tick</div>
+            <div class="metric-value" id="tick-cost">€0.00000</div>
+          </div>
+          <div class="token-metric">
+            <div class="metric-label">Cumulative</div>
+            <div class="metric-value" id="total-cost">€0.0000</div>
+          </div>
+        </div>
+        <div class="token-chart-wrap">
+          <canvas id="cost-chart"></canvas>
+        </div>
+        <div class="token-breakdown">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Tick</th>
+                <th>Agent</th>
+                <th>Model</th>
+                <th>In</th>
+                <th>Out</th>
+                <th>EUR</th>
+              </tr>
+            </thead>
+            <tbody id="token-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Network Execution Cost — full width -->
+    <section class="card panel-financials" id="panel-financials">
+      <div class="card-header">
+        <h2>Network Execution Cost</h2>
+        <span class="badge" id="fin-tick-badge">Tick 0</span>
+      </div>
+      <div class="card-body">
+        <div class="token-summary">
+          <div class="token-metric">
+            <div class="metric-label">Labor + Transport</div>
+            <div class="metric-value" id="fin-total-cost">€0.00</div>
+          </div>
+          <div class="token-metric">
+            <div class="metric-label">Cost per Unit Shipped</div>
+            <div class="metric-value" id="fin-cpu">€0.00</div>
+          </div>
+        </div>
+        <div class="token-chart-wrap-wide">
+          <canvas id="financial-chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. Forecast Accuracy — full width -->
+    <section class="card panel-forecast" id="panel-forecast">
+      <div class="card-header">
+        <h2>Forecast Accuracy · WAPE over Time</h2>
+        <span class="badge">IB vs FC</span>
+      </div>
+      <div class="card-body">
+        <div style="height:200px;">
+          <canvas id="forecast-chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. Agent Activity Log — full width -->
+    <section class="card panel-log" id="panel-log">
+      <div class="card-header">
+        <h2>Agent Activity Log</h2>
+        <span class="badge" id="log-count">0 entries</span>
+      </div>
+      <div class="card-body">
+        <div class="log-feed" id="log-feed"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
